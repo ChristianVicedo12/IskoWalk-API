@@ -1,0 +1,6 @@
+@IskoWalkAPI_HostAddress = http://localhost:5012
+
+GET {{IskoWalkAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

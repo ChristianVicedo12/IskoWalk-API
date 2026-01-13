@@ -1,0 +1,384 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using IskoWalkAPI.Data;
+using IskoWalkAPI.Models;
+using IskoWalkAPI.DTOs;
+using System.Security.Claims;
+
+namespace IskoWalkAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class WalkRequestController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+
+        public WalkRequestController(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        // ✅ GET AVAILABLE REQUESTS (For Dashboard - Person B)
+        [HttpGet("available")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetAvailableRequests([FromQuery] string? userId = null)
+        {
+            try
+            {
+                Console.WriteLine($"[DEBUG] Fetching available requests (excluding user: {userId})");
+
+                var query = _context.WalkRequests
+                    .Include(wr => wr.User)
+                    .Where(wr => wr.Status == "Active" && 
+                                wr.CancelledAt == null &&
+                                wr.CompanionId == null); // Only show unaccepted requests
+
+                // Exclude current user's own requests
+                if (!string.IsNullOrEmpty(userId))
+                {
+                    // Assuming userId might be username or email
+                    query = query.Where(wr => wr.User.Username != userId && wr.User.Email != userId);
+                }
+
+                var requests = await query
+                    .OrderByDescending(wr => wr.CreatedAt)
+                    .Select(wr => new
+                    {
+                        id = wr.Id,
+                        requesterName = wr.User.FullName ?? wr.User.Username,
+                        fromLocation = wr.FromLocation,
+                        toLocation = wr.ToDestination,
+                        walkTime = wr.TimeOfWalk.ToString(@"hh\:mm"),
+                        walkDate = wr.DateOfWalk,
+                        additionalNotes = wr.AdditionalNotes,
+                        contactNumber = wr.ContactNumber,
+                        createdAt = wr.CreatedAt
+                    })
+                    .ToListAsync();
+
+                Console.WriteLine($"[DEBUG] Found {requests.Count} available requests");
+                return Ok(requests);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] GetAvailableRequests: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred", error = ex.Message });
+            }
+        }
+
+        // ✅ ACCEPT REQUEST (Person B accepts Person A's request)
+        [HttpPost("accept")]
+        [AllowAnonymous]
+        public async Task<IActionResult> AcceptRequest([FromBody] AcceptRequestDto dto)
+        {
+            try
+            {
+                Console.WriteLine($"[DEBUG] Accepting request {dto.RequestId} by {dto.CompanionId}");
+
+                var request = await _context.WalkRequests
+                    .Include(wr => wr.User)
+                    .FirstOrDefaultAsync(wr => wr.Id == dto.RequestId);
+
+                if (request == null)
+                {
+                    return NotFound(new { message = "Request not found" });
+                }
+
+                if (request.Status != "Active")
+                {
+                    return BadRequest(new { message = "Request is no longer active" });
+                }
+
+                if (request.CompanionId != null)
+                {
+                    return BadRequest(new { message = "Request already accepted by someone else" });
+                }
+
+                // Find companion by username or email
+                var companion = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Username == dto.CompanionId || u.Email == dto.CompanionId);
+
+                if (companion == null)
+                {
+                    return NotFound(new { message = "Companion not found" });
+                }
+
+                // Update request
+                request.CompanionId = companion.Id;
+                request.Status = "Accepted";
+                request.UpdatedAt = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync();
+
+                Console.WriteLine($"[SUCCESS] Request {dto.RequestId} accepted by user {companion.Id}");
+
+                return Ok(new { 
+                    message = "Request accepted successfully",
+                    requestId = request.Id,
+                    companionName = companion.FullName ?? companion.Username
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] AcceptRequest: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred", error = ex.Message });
+            }
+        }
+
+        // ✅ GET MY ACTIVE REQUESTS (Person A's own requests)
+        [HttpGet("my-active")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetMyActiveRequests([FromQuery] string? userId = null)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return BadRequest(new { message = "userId is required" });
+                }
+
+                Console.WriteLine($"[DEBUG] Fetching active requests for user: {userId}");
+
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Username == userId || u.Email == userId);
+
+                if (user == null)
+                {
+                    return NotFound(new { message = "User not found" });
+                }
+
+                var activeRequests = await _context.WalkRequests
+                    .Include(wr => wr.Companion)
+                    .Where(wr => wr.UserId == user.Id && 
+                                wr.Status == "Active" && 
+                                wr.CancelledAt == null)
+                    .OrderByDescending(wr => wr.CreatedAt)
+                    .ToListAsync();
+
+                Console.WriteLine($"[DEBUG] Found {activeRequests.Count} active requests");
+
+                return Ok(activeRequests);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] GetMyActiveRequests: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred", error = ex.Message });
+            }
+        }
+
+        // ✅ CANCEL REQUEST
+        [HttpPost("{id}/cancel")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CancelRequest(int id, [FromBody] CancelRequestDto dto)
+        {
+            try
+            {
+                var request = await _context.WalkRequests.FindAsync(id);
+                
+                if (request == null)
+                {
+                    return NotFound(new { message = "Request not found" });
+                }
+
+                if (request.Status != "Active")
+                {
+                    return BadRequest(new { message = "Only active requests can be cancelled" });
+                }
+
+                request.Status = "Cancelled";
+                request.CancelledAt = DateTime.UtcNow;
+                request.CancellationReason = dto.Reason;
+                
+                await _context.SaveChangesAsync();
+
+                return Ok(new { message = "Request cancelled successfully" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] CancelRequest: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred", error = ex.Message });
+            }
+        }
+
+        // ✅ CREATE REQUEST (Person A creates)
+        [HttpPost("create")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CreateWalkRequest([FromBody] CreateWalkRequestDto dto)
+        {
+            try
+            {
+                // Find user by username or email
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Username == dto.UserId || u.Email == dto.UserId);
+
+                if (user == null)
+                {
+                    return BadRequest(new { message = "User not found" });
+                }
+
+                var request = new WalkRequest
+                {
+                    UserId = user.Id,
+                    FromLocation = dto.FromLocation,
+                    SpecifyOrigin = dto.SpecifyOrigin,
+                    ToDestination = dto.ToDestination,
+                    DateOfWalk = dto.DateOfWalk,
+                    TimeOfWalk = dto.TimeOfWalk,
+                    AdditionalNotes = dto.AdditionalNotes,
+                    AttireDescription = dto.AttireDescription,
+                    ContactNumber = dto.ContactNumber,
+                    Status = "Active",
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _context.WalkRequests.Add(request);
+                await _context.SaveChangesAsync();
+
+                Console.WriteLine($"[SUCCESS] Request created with ID: {request.Id}");
+
+                return Ok(new { message = "Walk request created successfully", requestId = request.Id });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] CreateWalkRequest: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred", error = ex.Message });
+            }
+        }
+
+        // ✅ GET ALL REQUESTS (For debugging)
+        [HttpGet("all")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetAllRequests()
+        {
+            try
+            {
+                var requests = await _context.WalkRequests
+                    .Include(wr => wr.User)
+                    .Include(wr => wr.Companion)
+                    .OrderByDescending(wr => wr.CreatedAt)
+                    .ToListAsync();
+
+                return Ok(requests);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] GetAllRequests: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred", error = ex.Message });
+            }
+        }
+
+
+        // ✅ GET ACCEPTED REQUESTS (Requests that the user has accepted as companion)
+        [HttpGet("my-accepted")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetMyAcceptedRequests([FromQuery] string? userId = null)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return BadRequest(new { message = "User ID is required" });
+                }
+
+                Console.WriteLine($"[INFO] Fetching accepted requests for user: {userId}");
+
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Username == userId || u.Email == userId);
+
+                if (user == null)
+                {
+                    return NotFound(new { message = "User not found" });
+                }
+
+                var acceptedRequests = await _context.WalkRequests
+                    .Include(wr => wr.User)
+                    .Where(wr => wr.CompanionId == user.Id && wr.Status == "Accepted")
+                    .OrderByDescending(wr => wr.DateOfWalk)
+                    .ThenByDescending(wr => wr.TimeOfWalk)
+                    .Select(wr => new
+                    {
+                        id = wr.Id,
+                        requesterName = wr.User.FullName ?? wr.User.Username,
+                        fromLocation = wr.FromLocation,
+                        specifyOrigin = wr.SpecifyOrigin,
+                        toLocation = wr.ToDestination,
+                        walkTime = wr.TimeOfWalk.ToString(@"hh\:mm"),
+                        walkDate = wr.DateOfWalk,
+                        additionalNotes = wr.AdditionalNotes,
+                        attireDescription = wr.AttireDescription,
+                        contactNumber = wr.ContactNumber,
+                        status = wr.Status,
+                        createdAt = wr.CreatedAt
+                    })
+                    .ToListAsync();
+
+                Console.WriteLine($"[SUCCESS] Found {acceptedRequests.Count} accepted requests");
+                return Ok(acceptedRequests);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] GetMyAcceptedRequests: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred", error = ex.Message });
+            }
+        }
+    }
+}
+
+        [HttpGet("history")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetHistory([FromQuery] string? userId = null)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return BadRequest(new { message = "User ID is required" });
+                }
+
+                Console.WriteLine($"[INFO] Fetching history for user: {userId}");
+
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Username == userId || u.Email == userId);
+
+                if (user == null)
+                {
+                    return NotFound(new { message = "User not found" });
+                }
+
+                var history = await _context.WalkRequests
+                    .Include(wr => wr.User)
+                    .Include(wr => wr.Companion)
+                    .Where(wr => (wr.UserId == user.Id || wr.CompanionId == user.Id) 
+                               && (wr.Status == "Completed" || wr.Status == "Cancelled"))
+                    .OrderByDescending(wr => wr.DateOfWalk)
+                    .ThenByDescending(wr => wr.TimeOfWalk)
+                    .Select(wr => new
+                    {
+                        id = wr.Id,
+                        userId = wr.UserId,
+                        requesterName = wr.User.FullName ?? wr.User.Username,
+                        companionName = wr.Companion != null ? wr.Companion.FullName ?? wr.Companion.Username : null,
+                        fromLocation = wr.FromLocation,
+                        toDestination = wr.ToDestination,
+                        toLocation = wr.ToDestination,
+                        dateOfWalk = wr.DateOfWalk,
+                        walkDate = wr.DateOfWalk,
+                        timeOfWalk = wr.TimeOfWalk.ToString(@"hh\:mm"),
+                        walkTime = wr.TimeOfWalk.ToString(@"hh\:mm"),
+                        status = wr.Status,
+                        createdAt = wr.CreatedAt
+                    })
+                    .ToListAsync();
+
+                Console.WriteLine($"[INFO] Found {history.Count} history records for {userId}");
+                return Ok(history);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] GetHistory: {ex.Message}");
+                return StatusCode(500, new { message = "Internal server error", error = ex.Message });
+            }
+        }
+    }
+}

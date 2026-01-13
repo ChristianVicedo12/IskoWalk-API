@@ -1,0 +1,185 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using IskoWalkAPI.Models;
+using IskoWalkAPI.Services;
+using IskoWalkAPI.Data;
+using IskoWalkAPI.DTOs;
+
+namespace IskoWalkAPI.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class WalkRequestController : ControllerBase
+{
+    private readonly MySqlService _mysql;
+    private readonly ApplicationDbContext _context;
+    private readonly ILogger<WalkRequestController> _logger;
+
+    public WalkRequestController(MySqlService mysql, ApplicationDbContext context, ILogger<WalkRequestController> logger)
+    {
+        _mysql = mysql;
+        _context = context;
+        _logger = logger;
+    }
+
+    // NEW: Create walk request endpoint
+    [HttpPost("create")]
+    public async Task<IActionResult> CreateWalkRequest([FromBody] CreateWalkRequestDto dto)
+    {
+        try
+        {
+            _logger.LogInformation("Creating walk request");
+
+            // Get user ID from JWT token
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            _logger.LogInformation($"User ID from token: {userIdClaim}");
+
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized(new { message = "Invalid token" });
+            }
+
+            // Get user from database
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+            {
+                return NotFound(new { message = "User not found" });
+            }
+
+            // Create walk request
+            var walkRequest = new WalkRequest
+            {
+                UserId = userId,
+                FromLocation = dto.FromLocation,
+                SpecifyOrigin = dto.SpecifyOrigin,
+                ToDestination = dto.ToDestination,
+                DateOfWalk = dto.DateOfWalk,
+                TimeOfWalk = dto.TimeOfWalk,
+                AdditionalNotes = dto.AdditionalNotes,
+                Status = "Active",
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.WalkRequests.Add(walkRequest);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation($"Walk request created with ID: {walkRequest.Id}");
+
+            // Return response
+            var response = new WalkRequestResponseDto
+            {
+                Id = walkRequest.Id,
+                UserId = walkRequest.UserId,
+                RequesterName = user.FullName,
+                RequesterEmail = user.Email,
+                FromLocation = walkRequest.FromLocation,
+                SpecifyOrigin = walkRequest.SpecifyOrigin,
+                ToDestination = walkRequest.ToDestination,
+                DateOfWalk = walkRequest.DateOfWalk,
+                TimeOfWalk = walkRequest.TimeOfWalk,
+                AdditionalNotes = walkRequest.AdditionalNotes,
+                Status = walkRequest.Status,
+                CreatedAt = walkRequest.CreatedAt
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Error creating walk request: {ex.Message}");
+            _logger.LogError($"Stack trace: {ex.StackTrace}");
+            return StatusCode(500, new { message = "Error creating request", error = ex.Message });
+        }
+    }
+
+    // Existing endpoints below
+    [HttpGet("available")]
+    public async Task<ActionResult<List<WalkRequest>>> GetAvailableRequests([FromQuery] string? userId)
+    {
+        try
+        {
+            if (userId <= 0)
+
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.Username == userId || u.Email == userId);
+
+            if (user == null && int.TryParse(userId, out int numericId))
+            {
+                user = await _context.Users.FindAsync(numericId);
+            }
+
+            if (user == null)
+                return NotFound(new { message = "User not found" });
+                return BadRequest(new { message = "Valid User ID is required" });
+
+            var requests = await _mysql.GetAvailableRequestsAsync(userId);
+            return Ok(requests);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting available requests");
+            return StatusCode(500, new { message = "Error fetching available requests", error = ex.Message });
+        }
+    }
+
+    [HttpGet("active")]
+    public async Task<ActionResult<List<WalkRequest>>> GetActiveRequests([FromQuery] int userId)
+    {
+        try
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Valid User ID is required" });
+
+            var requests = await _mysql.GetActiveRequestsAsync(userId);
+            return Ok(requests);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting active requests");
+            return StatusCode(500, new { message = "Error fetching active requests", error = ex.Message });
+        }
+    }
+
+    [HttpGet("my-active")]
+    public async Task<IActionResult> GetMyActiveRequests()
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized(new { message = "Invalid token" });
+            }
+
+            var requests = await _context.WalkRequests
+                .Include(w => w.User)
+                .Where(w => w.UserId == userId && w.Status == "Active")
+                .OrderByDescending(w => w.CreatedAt)
+                .Select(w => new WalkRequestResponseDto
+                {
+                    Id = w.Id,
+                    UserId = w.UserId,
+                    RequesterName = w.User!.FullName,
+                    RequesterEmail = w.User.Email,
+                    FromLocation = w.FromLocation,
+                    SpecifyOrigin = w.SpecifyOrigin,
+                    ToDestination = w.ToDestination,
+                    DateOfWalk = w.DateOfWalk,
+                    TimeOfWalk = w.TimeOfWalk,
+                    AdditionalNotes = w.AdditionalNotes,
+                    Status = w.Status,
+                    CreatedAt = w.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(requests);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Error fetching requests: {ex.Message}");
+            return StatusCode(500, new { message = "Error fetching requests", error = ex.Message });
+        }
+    }
+}
