@@ -73,7 +73,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.AcceptedBy,
+                    CompanionId = w.CompanionId,
                     CompanionName = w.Companion != null ? w.Companion.FullName : null,
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -98,10 +98,22 @@ namespace IskoWalkAPI.Controllers
         {
             var currentUserId = GetCurrentUserId();
             
-            var requests = await _context.WalkRequests
+            Console.WriteLine($"[DEBUG] GetAcceptedWalks called by user: {currentUserId}");
+            
+            var allRequests = await _context.WalkRequests
                 .Include(w => w.User)
                 .Include(w => w.Companion)
-                .Where(w => w.AcceptedBy == currentUserId)
+                .Where(w => w.AcceptedBy == currentUserId || w.CompanionId == currentUserId)
+                .ToListAsync();
+            
+            Console.WriteLine($"[DEBUG] Total requests for user: {allRequests.Count}");
+            foreach (var r in allRequests)
+            {
+                Console.WriteLine($"[DEBUG] Request ID: {r.Id}, Status: '{r.Status}'");
+            }
+            
+            var acceptedRequests = allRequests
+                .Where(w => w.Status == "Accepted")
                 .OrderByDescending(w => w.AcceptedAt)
                 .Select(w => new WalkRequestResponseDto
                 {
@@ -109,7 +121,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.AcceptedBy,
+                    CompanionId = w.AcceptedBy ?? w.CompanionId,
                     CompanionName = w.Companion != null ? w.Companion.FullName : "",
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -122,9 +134,11 @@ namespace IskoWalkAPI.Controllers
                     CreatedAt = w.CreatedAt,
                     AcceptedAt = w.AcceptedAt
                 })
-                .ToListAsync();
+                .ToList();
             
-            return Ok(requests);
+            Console.WriteLine($"[DEBUG] Filtered accepted requests: {acceptedRequests.Count}");
+            
+            return Ok(acceptedRequests);
         }
         
         // GET: api/walkrequests/history
@@ -136,7 +150,7 @@ namespace IskoWalkAPI.Controllers
             var requests = await _context.WalkRequests
                 .Include(w => w.User)
                 .Include(w => w.Companion)
-                .Where(w => (w.UserId == currentUserId || w.AcceptedBy == currentUserId) 
+                .Where(w => (w.UserId == currentUserId || w.CompanionId == currentUserId || w.AcceptedBy == currentUserId) 
                     && (w.Status == "Completed" || w.Status == "Cancelled"))
                 .OrderByDescending(w => w.UpdatedAt ?? w.CancelledAt)
                 .Select(w => new WalkRequestResponseDto
@@ -145,7 +159,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.AcceptedBy,
+                    CompanionId = w.CompanionId,
                     CompanionName = w.Companion != null ? w.Companion.FullName : null,
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -178,7 +192,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.AcceptedBy,
+                    CompanionId = w.CompanionId,
                     CompanionName = w.Companion != null ? w.Companion.FullName : null,
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -242,6 +256,7 @@ namespace IskoWalkAPI.Controllers
             }
             
             request.AcceptedBy = currentUserId;
+            request.CompanionId = currentUserId;
             request.Status = "Accepted";
             request.AcceptedAt = DateTime.UtcNow;
             
@@ -288,27 +303,43 @@ namespace IskoWalkAPI.Controllers
         {
             var currentUserId = GetCurrentUserId();
             
+            Console.WriteLine($"[DEBUG] CompleteRequest called by user {currentUserId} for request {id}");
+            
             var request = await _context.WalkRequests.FindAsync(id);
             
             if (request == null)
             {
+                Console.WriteLine($"[DEBUG] Request {id} not found");
                 return NotFound(new { message = "Walk request not found" });
             }
             
-            if (request.AcceptedBy != currentUserId && request.UserId != currentUserId)
+            Console.WriteLine($"[DEBUG] Request {id} current status: '{request.Status}'");
+            
+            bool isCompanion = (request.AcceptedBy.HasValue && request.AcceptedBy.Value == currentUserId) || 
+                              (request.CompanionId.HasValue && request.CompanionId.Value == currentUserId);
+            bool isRequester = request.UserId == currentUserId;
+            
+            Console.WriteLine($"[DEBUG] isCompanion: {isCompanion}, isRequester: {isRequester}");
+            
+            if (!isCompanion && !isRequester)
             {
+                Console.WriteLine($"[DEBUG] User {currentUserId} not authorized");
                 return Forbid();
             }
             
             if (request.Status != "Accepted")
             {
-                return BadRequest(new { message = "Only accepted requests can be marked as completed" });
+                Console.WriteLine($"[DEBUG] Cannot complete - status is '{request.Status}', not 'Accepted'");
+                return BadRequest(new { message = $"Only accepted requests can be marked as completed. Current status: {request.Status}" });
             }
             
             request.Status = "Completed";
             request.UpdatedAt = DateTime.UtcNow;
             
+            Console.WriteLine($"[DEBUG] Saving changes - new status: '{request.Status}'");
             await _context.SaveChangesAsync();
+            
+            Console.WriteLine($"[DEBUG] Request {id} marked as completed successfully");
             
             return Ok(new { message = "Request completed successfully" });
         }
