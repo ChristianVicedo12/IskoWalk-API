@@ -73,7 +73,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.CompanionId,
+                    CompanionId = w.AcceptedBy,
                     CompanionName = w.Companion != null ? w.Companion.FullName : null,
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -101,7 +101,7 @@ namespace IskoWalkAPI.Controllers
             var requests = await _context.WalkRequests
                 .Include(w => w.User)
                 .Include(w => w.Companion)
-                .Where(w => w.CompanionId == currentUserId)
+                .Where(w => w.AcceptedBy == currentUserId)
                 .OrderByDescending(w => w.AcceptedAt)
                 .Select(w => new WalkRequestResponseDto
                 {
@@ -109,7 +109,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.CompanionId,
+                    CompanionId = w.AcceptedBy,
                     CompanionName = w.Companion != null ? w.Companion.FullName : "",
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -136,7 +136,7 @@ namespace IskoWalkAPI.Controllers
             var requests = await _context.WalkRequests
                 .Include(w => w.User)
                 .Include(w => w.Companion)
-                .Where(w => (w.UserId == currentUserId || w.CompanionId == currentUserId) 
+                .Where(w => (w.UserId == currentUserId || w.AcceptedBy == currentUserId) 
                     && (w.Status == "Completed" || w.Status == "Cancelled"))
                 .OrderByDescending(w => w.UpdatedAt ?? w.CancelledAt)
                 .Select(w => new WalkRequestResponseDto
@@ -145,7 +145,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.CompanionId,
+                    CompanionId = w.AcceptedBy,
                     CompanionName = w.Companion != null ? w.Companion.FullName : null,
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -178,7 +178,7 @@ namespace IskoWalkAPI.Controllers
                     UserId = w.UserId,
                     RequesterName = w.User != null ? w.User.FullName : "",
                     RequesterEmail = w.User != null ? w.User.Email : "",
-                    CompanionId = w.CompanionId,
+                    CompanionId = w.AcceptedBy,
                     CompanionName = w.Companion != null ? w.Companion.FullName : null,
                     FromLocation = w.FromLocation,
                     SpecifyOrigin = w.SpecifyOrigin,
@@ -241,7 +241,7 @@ namespace IskoWalkAPI.Controllers
                 return BadRequest(new { message = "You cannot accept your own request" });
             }
             
-            request.CompanionId = currentUserId;
+            request.AcceptedBy = currentUserId;
             request.Status = "Accepted";
             request.AcceptedAt = DateTime.UtcNow;
             
@@ -295,7 +295,7 @@ namespace IskoWalkAPI.Controllers
                 return NotFound(new { message = "Walk request not found" });
             }
             
-            if (request.CompanionId != currentUserId && request.UserId != currentUserId)
+            if (request.AcceptedBy != currentUserId && request.UserId != currentUserId)
             {
                 return Forbid();
             }
