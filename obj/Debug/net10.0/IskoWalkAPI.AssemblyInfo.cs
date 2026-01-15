@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("IskoWalkAPI")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+793f723aa4f7f7acb77d76e9830f9f7cfdd1b044")]
 [assembly: System.Reflection.AssemblyProductAttribute("IskoWalkAPI")]
 [assembly: System.Reflection.AssemblyTitleAttribute("IskoWalkAPI")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

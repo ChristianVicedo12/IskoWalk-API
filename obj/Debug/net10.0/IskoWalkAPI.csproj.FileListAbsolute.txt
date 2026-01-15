@@ -129,6 +129,7 @@
 /Users/christianvicedo/Desktop/IskoWalkAPI/obj/Debug/net10.0/IskoWalkAPI.csproj.CoreCompileInputs.cache
 /Users/christianvicedo/Desktop/IskoWalkAPI/obj/Debug/net10.0/IskoWalkAPI.MvcApplicationPartsAssemblyInfo.cs
 /Users/christianvicedo/Desktop/IskoWalkAPI/obj/Debug/net10.0/IskoWalkAPI.MvcApplicationPartsAssemblyInfo.cache
+/Users/christianvicedo/Desktop/IskoWalkAPI/obj/Debug/net10.0/IskoWalkAPI.sourcelink.json
 /Users/christianvicedo/Desktop/IskoWalkAPI/obj/Debug/net10.0/rjimswa.dswa.cache.json
 /Users/christianvicedo/Desktop/IskoWalkAPI/obj/Debug/net10.0/rjsmrazor.dswa.cache.json
 /Users/christianvicedo/Desktop/IskoWalkAPI/obj/Debug/net10.0/rjsmcshtml.dswa.cache.json
